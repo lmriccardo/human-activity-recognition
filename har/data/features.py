@@ -1,8 +1,18 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+import numpy as np
 
-from har.data.visualize import *
+from pathlib import Path
+from typing import Tuple, Dict
+
+from har.data.visualize import (
+    plot_number_of_activities_per_user,
+    plot_number_of_timestamps_for_activity,
+    plot_correlation_matrix,
+    plot_activity_distributions,
+    plot_timeseries_per_user
+)
 
 
 def feature_extractor(dataset_data : pd.DataFrame) -> None:
@@ -127,3 +137,97 @@ def per_user_features_extractor(
 
     print()
     plot_timeseries_per_user(user_value, df_user, activities, save=False)
+
+
+def modify_feauture_dataset(
+    in_data: pd.DataFrame, path_to_save: str, save: bool=False
+) -> Tuple[pd.DataFrame, Dict[str, int]] | None:
+    """
+    Create a new dataset by modifying the input one. In this we will get rid
+    of the user specification and the timestamp specification (we do not need
+    them). Notice that the actual presence of which user is releated to which 
+    activity it is not so important. Since we would like to classify the time serie as 
+    just the activity it represents, we might just consider a single user which does all 
+    the activities in different days. 
+    
+    Another thing that might not be important is the
+    timestamp. Treating each sequence of point already consider them as time-dependent,
+    hence having just a sequence of always ascending values is irrelevant to our 
+    objective.
+
+    The final dataset will have a number of columns equal to N_u x 3 x U
+    where N_u is the number of activities of the user u, 3 came from the 3
+    axis and U is the number of total users.
+
+    Parameters
+    ----------
+    in_data : pd.DataFrame
+        The original dataset after feature engineering
+    
+    path_to_save : str
+        Where to save the final dataset if needed
+    
+    save : bool (default=True)
+        Whether to save or not the dataset
+
+    Returns
+    -------
+    pd.DataFrame | None
+        It will return the final dataset whenever the user do not chose
+        to save it, otherwise it will save the dataset and return nothing.
+        It will also returns, in case of no saving, another dictionary
+        that containsn for each activity of each user the length of the
+        original timeseries, since it has been extended in the new dataset.
+    """
+    df_new_data = dict()
+    timeseries_lengths = {"Activity" : [], "Size" : []}
+
+    # Take the maximum length a time serie is in the original dataset
+    # this will be used to pad those which are smaller
+    maximum_ts_length = in_data.groupby(['user', 'activity']).count()['timestamp'].max()
+    
+    # Loop for all the users
+    for user_value in in_data.user.unique():
+        # Loop for all activity of the user
+        df_user_tmp = in_data.loc[in_data.user == user_value].copy()
+        df_user_tmp.reset_index(inplace=True)
+
+        for activity in df_user_tmp.loc[:, 'activity'].unique():
+            header_name_x = f"{activity.lower()}_{user_value}_X"
+            header_name_y = f"{activity.lower()}_{user_value}_Y"
+            header_name_z = f"{activity.lower()}_{user_value}_Z"
+            
+            df_user_act = df_user_tmp.loc[df_user_tmp.activity == activity] \
+                                     .iloc[:, [-4, -3, -2, -1]]             \
+                                     .copy()
+
+            x_series = df_user_act['x-axis'].values
+            y_series = df_user_act['y-axis'].values
+            z_series = df_user_act['z-axis'].values
+
+            timeseries_lengths["Activity"].append(f"{activity.lower()}_{user_value}")
+            timeseries_lengths["Size"].append(x_series.size)
+
+            if x_series.size < maximum_ts_length:
+                padding_size = maximum_ts_length - x_series.size
+                x_series = np.pad(x_series, (0, padding_size), mode='constant')
+                y_series = np.pad(y_series, (0, padding_size), mode='constant')
+                z_series = np.pad(z_series, (0, padding_size), mode='constant')
+
+            df_new_data[header_name_x] = x_series
+            df_new_data[header_name_y] = y_series
+            df_new_data[header_name_z] = z_series
+        
+    df_data = pd.DataFrame(df_new_data)
+    df_data_lengths = pd.DataFrame(timeseries_lengths)
+
+    # If we do not have to save the dataset then just return it 
+    if not save: return df_data, df_data_lengths
+
+    # Otherwise we need to save it, and also the additional dictionary
+    df_data.to_csv(path_to_save)
+
+    path_to_save = path_to_save if isinstance(path_to_save, Path) else Path(path_to_save)
+    df_data_name = path_to_save.stem
+    path_to_save_add = path_to_save.parent / f"{df_data_name}_lenghts.csv"
+    df_data_lengths.to_csv(path_to_save_add)
