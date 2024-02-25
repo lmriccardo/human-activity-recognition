@@ -10,21 +10,17 @@ from pathlib import Path
 
 
 class HumanActivityRecognitionDataset(torchdata.Dataset):
-    """**Human Activity Recognition Task Dataset**
-    
-    Attributes
-    ----------
-    ...
-    """
     def __init__(
-        self, ds_path: Path |str | None=None, ds_path_lengths: Path |str | None=None,
-        ds_data : pd.DataFrame | None=None, ds_data_lengths : pd.DataFrame | None=None,
-        series_split_n : int=SERIES_SPLIT_NUMBER
+        self, ds_path: Path |str | None=None,
+              ds_path_lengths: Path |str | None=None,
+              ds_data : pd.DataFrame | None=None,
+              ds_data_lengths : pd.DataFrame | None=None,
+              series_split_n : int=SERIES_SPLIT_NUMBER
     ) -> None:
         self.data = ds_data
         self.data_size = ds_data_lengths
 
-        # If both ds_path and ds_path_lengths 
+        # If both ds_path and ds_path_lengths
         if ds_path is not None and ds_path_lengths is not None:
             self.data = pd.read_csv(ds_path)
             self.data_size = pd.read_csv(ds_path_lengths)
@@ -34,27 +30,37 @@ class HumanActivityRecognitionDataset(torchdata.Dataset):
             "Error: The input dataset is empty or None. \n" + \
             "Please provide a dataset either already loaded from the CSV " + \
             "file or provide at least the two CSV files"
-        
+
         self.series_split_n = series_split_n
         self.labels = list(set([ x.split("_")[0] for x in self.data_size.Activity ]))
 
-    def __len__(self) -> int:
-        """ Return the length of the dataset """
-        total_size = 0
-        for index in range(self.data_size.shape[0]):
-            size = self.data_size.iloc[index, -1]
-            total_size = total_size + size // self.series_split_n
+        self.final_data = self.divide_data()
 
-        return total_size
-    
+    @property
+    def number_of_user(self) -> int:
+        """ Returns the number of users taken for this dataset """
+        end_user = int(self.data_size.Activity.values[-1].split("_")[1])
+        start_user = int(self.data_size.Activity.values[0].split("_")[1])
+        return end_user - start_user
+
     def divide_data(self) -> List[Tuple[int, Tuple[List[float], List[float], List[float]]]]:
+        """
+        Divide the input data into smaller dimensional sequences in order to have
+        more data to train the neural network. The division is based on the
+        parameter `series_split_n` which precise the number of elements for each
+        split, and the number of split is computed as `size // series_split_n` + 1
+        if `size % series_split_n` is different from 0. For example, from a series
+        of 12861 data, we can create 129 subseries each of length 100. 
+
+        Returns
+        -------
+        List[Tuple[int, Tuple[List[float], List[float], List[float]]]]
+            The final list. At each position in the list there is a tuple:
+            in the first position the classification of that part of the serie,
+            in the second position another tuple with (x, y, z) subseries.
+        """
         resulting_data = []
-        for activity in self.data_size.Activity:
-            data_size = self.data_size.loc[self.data_size.Activity == activity] \
-                            .copy()                                             \
-                            .Size                                               \
-                            .values[0]
-            
+        for activity, data_size in zip(self.data_size.Activity, self.data_size.Size):
             activity_index_label = self.labels.index(activity.split("_")[0])
 
             x_series = self.data[f"{activity}_X"].values[:data_size]
@@ -62,16 +68,39 @@ class HumanActivityRecognitionDataset(torchdata.Dataset):
             z_series = self.data[f"{activity}_Z"].values[:data_size]
 
             n_subseries = data_size // self.series_split_n
-            for subindex in range(0, n_subseries):
-                x_subserie = x_series[subindex * n_subseries : (subindex + 1) * n_subseries]
-                y_subserie = y_series[subindex * n_subseries : (subindex + 1) * n_subseries]
-                z_subserie = z_series[subindex * n_subseries : (subindex + 1) * n_subseries]
+            for subindex in range(0, n_subseries + 1):
+                start_idx = subindex * self.series_split_n
+                end_idx = (subindex + 1) * self.series_split_n
+
+                if subindex == n_subseries and data_size % self.series_split_n:
+                    x_subserie = x_series[start_idx :]
+                    y_subserie = y_series[start_idx :]
+                    z_subserie = z_series[start_idx :]
+                    resulting_data.append(
+                        (activity_index_label, (x_subserie, y_subserie, z_subserie))
+                    )
+                    continue
+
+                x_subserie = x_series[start_idx : end_idx]
+                y_subserie = y_series[start_idx : end_idx]
+                z_subserie = z_series[start_idx : end_idx]
+
                 resulting_data.append(
                     (activity_index_label, (x_subserie, y_subserie, z_subserie))
                 )
-        
+
         return resulting_data
-    
+
+    def __len__(self) -> int:
+        total_size = 0
+        for index in range(self.data_size.shape[0]):
+            size = self.data_size.iloc[index, -1]
+            total_size = total_size + size // self.series_split_n
+            if size % self.series_split_n != 0:
+                total_size = total_size + 1
+
+        return total_size
+
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
         if idx > self.__len__():
             raise ValueError(
@@ -80,9 +109,11 @@ class HumanActivityRecognitionDataset(torchdata.Dataset):
 
         label, (x, y, z) = self.final_data[idx]
 
-        x_tensor = torch.tensor(x, dtype=torch.float64, device='cpu')
-        y_tensor = torch.tensor(y, dtype=torch.float64, device='cpu')
-        z_tensor = torch.tensor(z, dtype=torch.float64, device='cpu')
+        device = 'cpu' if not torch.cuda.is_available else 'cuda'
+
+        x_tensor = torch.tensor(x, dtype=torch.float64, device=device)
+        y_tensor = torch.tensor(y, dtype=torch.float64, device=device)
+        z_tensor = torch.tensor(z, dtype=torch.float64, device=device)
 
         return (label, torch.vstack((x_tensor, y_tensor, z_tensor)))
         
