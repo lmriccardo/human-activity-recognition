@@ -3,7 +3,7 @@ import torch.utils.data as torchdata
 import pandas as pd
 import math
 
-from har.utils.constants import TRAIN_PERCENTAGE, SERIES_SPLIT_NUMBER
+from har.utils.constants import TRAIN_PERCENTAGE, SERIES_SPLIT_NUMBER, DEVICE
 from har.data.features import modify_feauture_dataset
 from typing import Tuple, List
 from pathlib import Path
@@ -109,13 +109,11 @@ class HumanActivityRecognitionDataset(torchdata.Dataset):
 
         label, (x, y, z) = self.final_data[idx]
 
-        device = 'cpu' if not torch.cuda.is_available else 'cuda'
+        x_tensor = torch.tensor(x, dtype=torch.float64, device=DEVICE)
+        y_tensor = torch.tensor(y, dtype=torch.float64, device=DEVICE)
+        z_tensor = torch.tensor(z, dtype=torch.float64, device=DEVICE)
 
-        x_tensor = torch.tensor(x, dtype=torch.float64, device=device)
-        y_tensor = torch.tensor(y, dtype=torch.float64, device=device)
-        z_tensor = torch.tensor(z, dtype=torch.float64, device=device)
-
-        return (label, torch.vstack((x_tensor, y_tensor, z_tensor)))
+        return (torch.vstack((x_tensor, y_tensor, z_tensor)).T, label)
         
 
 def split_dataset(

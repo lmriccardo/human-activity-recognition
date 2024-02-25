@@ -1,3 +1,5 @@
+import torch
+
 from pathlib import Path
 
 TRAIN_PERCENTAGE = 70 # Train Percentage on user selection
@@ -14,3 +16,6 @@ TEST_LENGHTS_DATASET   = DATASET_PATH / "dataset/test_modified_dataset_lenghts.c
 
 # How many step to take for each series
 SERIES_SPLIT_NUMBER = 100
+
+# Check if CUDA is available to run things on the GPU
+DEVICE = 'cpu' if not torch.cuda.is_available else 'cuda'
